@@ -1,16 +1,14 @@
 services:
   profiles_api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: lapivan/innoprofilesapi:1.0.1
     ports:
       - "5242:8080"
     container_name: profiles_api
     depends_on:
       postgresql:
-        condition: service_started
+        condition: service_healthy
       mongodb:
-        condition: service_started
+        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=${PROFILES_DB_CONN}
@@ -25,13 +23,23 @@ services:
       - POSTGRES_DB=ProfilesApiDb
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ProfilesApiDb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     volumes:
       - profiles_api_data:/var/lib/postgresql/data
   mongodb:
-    image: mongo:latest
+    image: mongo:8.0
     container_name: profiles_api_logs_mongo
     ports:
       - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     volumes:
       - profiles_api_logs:/data/db
 volumes:
