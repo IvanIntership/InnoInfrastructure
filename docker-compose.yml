@@ -1,6 +1,6 @@
 services:
   profiles_api:
-    image: lapivan/innoprofilesapi:1.0.1
+    image: lapivan/innoprofilesapi:1.0.2
     ports:
       - "5242:8080"
     container_name: profiles_api
