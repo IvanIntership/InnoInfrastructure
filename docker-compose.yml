@@ -1,6 +1,6 @@
 services:
   profiles_api:
-    image: lapivan/innoprofilesapi:1.0.2
+    image: lapivan/innoprofilesapi:1.0.3
     ports:
       - "5242:8080"
     container_name: profiles_api
@@ -14,6 +14,7 @@ services:
       - ConnectionStrings__DefaultConnection=${PROFILES_DB_CONN}
       - ConnectionStrings__MongoLogging=${MONGO_LOGGING_CONN}
       - PasswordSettings__Key=${PASSWORD_SECRET_KEY}
+      
   profiles_postgresql:
     image: postgres:16-alpine
     ports:
@@ -30,6 +31,7 @@ services:
       retries: 5
     volumes:
       - profiles_api_data:/var/lib/postgresql/data
+      
   profiles_mongodb:
     image: mongo:8.0
     container_name: profiles_api_logs_mongo
@@ -42,8 +44,9 @@ services:
       retries: 5
     volumes:
       - profiles_api_logs:/data/db
+      
   services_api:
-    image: lapivan/innoservicesapi:1.0.0
+    image: lapivan/innoservicesapi:1.0.1
     ports:
       - "5243:8080"
     container_name: services_api
@@ -87,7 +90,71 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  auth_api:
+    image: lapivan/auth-api:1.0.0
+    ports:
+      - "5078:8080"
+    container_name: auth_api
+    depends_on:
+      auth_postgresql:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=${AUTH_DB_CONN}
+      - Keycloak__BaseUrl=${KEYCLOAK_BASE_URL}
+      - Keycloak__Realm=${KEYCLOAK_REALM}
+      - Keycloak__ClientId=${KEYCLOAK_CLIENT_ID}
+      - Keycloak__ClientSecret=${KEYCLOAK_CLIENT_SECRET}
+      - Keycloak__RedirectUri=${KEYCLOAK_REDIRECT_URI}
+
+  auth_postgresql:
+    image: postgres:16-alpine
+    ports:
+      - "5434:5432"
+    container_name: auth_api_data_postgresql
+    environment:
+      - POSTGRES_DB=AuthApiDb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d AuthApiDb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - auth_api_data:/var/lib/postgresql/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.2
+    container_name: keycloak
+    ports:
+      - "8080:8080"
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+    command: ["start-dev"]
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+
+  gateway:
+    image: lapivan/innogatewayapi:1.0.1
+    container_name: gateway
+    ports:
+      - "5000:5000"
+    depends_on:
+      - auth_api
+      - profiles_api
+      - services_api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Docker
+      - ASPNETCORE_URLS=http://+:5000
+
 volumes:
   profiles_api_data:
   profiles_api_logs:
   services_api_data:
+  auth_api_data:
+  keycloak_data:
