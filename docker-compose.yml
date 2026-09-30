@@ -9,12 +9,19 @@ services:
         condition: service_healthy
       profiles_mongodb:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=${PROFILES_DB_CONN}
       - ConnectionStrings__MongoLogging=${MONGO_LOGGING_CONN}
       - PasswordSettings__Key=${PASSWORD_SECRET_KEY}
-      
+      - RabbitMQ__Host=rabbitmq
+      - Keycloak__BaseUrl=${KEYCLOAK_BASE_URL}
+      - Keycloak__Realm=${KEYCLOAK_REALM}
+    volumes:
+      - profiles_api_photos:/app/uploads
+
   profiles_postgresql:
     image: postgres:16-alpine
     ports:
@@ -31,7 +38,7 @@ services:
       retries: 5
     volumes:
       - profiles_api_data:/var/lib/postgresql/data
-      
+
   profiles_mongodb:
     image: mongo:8.0
     container_name: profiles_api_logs_mongo
@@ -44,7 +51,7 @@ services:
       retries: 5
     volumes:
       - profiles_api_logs:/data/db
-      
+
   services_api:
     image: lapivan/innoservicesapi:1.0.1
     ports:
@@ -62,6 +69,8 @@ services:
       - ConnectionStrings__DefaultConnection=${SERVICES_DB_CONN}
       - ConnectionStrings__Redis=redis:6379
       - Services__ProfilesApiUrl=http://profiles_api:8080/
+      - Keycloak__BaseUrl=${KEYCLOAK_BASE_URL}
+      - Keycloak__Realm=${KEYCLOAK_REALM}
 
   services_postgresql:
     image: postgres:16-alpine
@@ -101,6 +110,8 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_started
+      rabbitmq:
+        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=${AUTH_DB_CONN}
@@ -109,6 +120,7 @@ services:
       - Keycloak__ClientId=${KEYCLOAK_CLIENT_ID}
       - Keycloak__ClientSecret=${KEYCLOAK_CLIENT_SECRET}
       - Keycloak__RedirectUri=${KEYCLOAK_REDIRECT_URI}
+      - RabbitMQ__Host=rabbitmq
 
   auth_postgresql:
     image: postgres:16-alpine
@@ -137,7 +149,82 @@ services:
       - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
     command: ["start-dev"]
     volumes:
-      - keycloak_data:/opt/keycloak/data
+      - keycloak-data:/opt/keycloak/data
+    networks:
+      default:
+        aliases:
+          - keycloak.localtest.me
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  appointments_api:
+    image: lapivan/innoappointmentsapi:1.0.0
+    ports:
+      - "5244:8080"
+    container_name: appointments_api
+    depends_on:
+      appointments_postgresql_write:
+        condition: service_healthy
+      appointments_postgresql_read:
+        condition: service_healthy
+      profiles_mongodb:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__PostgresWriteConnection=${APPOINTMENTS_WRITE_DB_CONN}
+      - ConnectionStrings__PostgresReadConnection=${APPOINTMENTS_READ_DB_CONN}
+      - ConnectionStrings__MongoWriteConnection=${APPOINTMENTS_MONGO_WRITE_CONN}
+      - ConnectionStrings__MongoReadConnection=${APPOINTMENTS_MONGO_READ_CONN}
+      - Keycloak__BaseUrl=${KEYCLOAK_BASE_URL}
+      - Keycloak__Realm=${KEYCLOAK_REALM}
+      - Gateway__BaseUrl=${GATEWAY_BASE_URL}
+      - Gateway__ClientId=${GATEWAY_CLIENT_ID}
+
+  appointments_postgresql_write:
+    image: postgres:16-alpine
+    ports:
+      - "5435:5432"
+    container_name: appointments_api_data_write_postgresql
+    environment:
+      - POSTGRES_DB=InnoAppointmentsDb_Write
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d InnoAppointmentsDb_Write"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - appointments_api_write_data:/var/lib/postgresql/data
+
+  appointments_postgresql_read:
+    image: postgres:16-alpine
+    ports:
+      - "5436:5432"
+    container_name: appointments_api_data_read_postgresql
+    environment:
+      - POSTGRES_DB=InnoAppointmentsDb_Read
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d InnoAppointmentsDb_Read"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - appointments_api_read_data:/var/lib/postgresql/data
 
   gateway:
     image: lapivan/innogatewayapi:1.0.1
@@ -148,6 +235,7 @@ services:
       - auth_api
       - profiles_api
       - services_api
+      - appointments_api
     environment:
       - ASPNETCORE_ENVIRONMENT=Docker
       - ASPNETCORE_URLS=http://+:5000
@@ -157,4 +245,9 @@ volumes:
   profiles_api_logs:
   services_api_data:
   auth_api_data:
-  keycloak_data:
+  keycloak-data:
+    external: true
+    name: "authapi_keycloak-data"
+  appointments_api_write_data:
+  appointments_api_read_data:
+  profiles_api_photos:
